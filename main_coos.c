@@ -14,9 +14,15 @@
 #include "adc.h"
 #include "pwm.h"
 
-#define PWM_MIN 1
-#define PWM_MAX 999
-
+#define SENSOR_TEMPERATURA		"testtopic/gms/sensor_temperatura"
+#define SENSOR_LUMINOSIDADE		"testtopic/gms/sensor_luminosidade"
+#define SENSOR_UMIDADE			"testtopic/gms/sensor_umidade"
+#define CONTROLE_DIMERIZACAO	"testtopic/gms/controle_dimerizacao"
+#define RELAY_1					"testtopic/gms/relay_1"
+#define RELAY_2					"testtopic/gms/relay_2"
+#define LIMITES_DIMERIZACAO		"testtopic/gms/limites_dimerizacao"
+#define LIMITES_RELAY_1			"testtopic/gms/limites_relay_1"
+#define LIMITES_RELAY_2			"testtopic/gms/limites_relay_2"
 
 uint8_t eth_frame[FRAME_SIZE];
 uint8_t mymac[6] = {0x0e, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -28,6 +34,8 @@ int lim_sup_lux = -1, lim_inf_lux = -1;
 int lim_sup_r1 = -1, lim_inf_r1 = -1;
 int lim_sup_r2 = -1, lim_inf_r2 = -1;
 int MANUAL_R1, MANUAL_R2;
+float temp, lux, humid = 0, final=0, adc_lux, escala_dim=0;
+struct dht_s dht_11;
 
 const float F_VOLTAGE = 635.0;		// 590 ~ 700mV typical diode forward voltage
 const float T_COEFF = -2.0;			// 1.8 ~ 2.2mV change per degree Celsius
@@ -35,26 +43,6 @@ const float V_RAIL = 3300.0;		// 3300mV rail voltage
 const float ADC_MAX = 4095.0;		// max ADC value
 const int ADC_SAMPLES = 1024;		// ADC read samples
 const int REF_RESISTANCE = 3500;
-
-float temp, lux, humid = 0, final=0, adc_lux, escala_dim=0;
-int lux_lim_sup = -1, lux_lim_inf = -1;
-int rl_lim_inf = -1;
-int rl_lim_sup = -1;
-int rl1_manual = 0;
-int rl2_manual = 0;
-int lux_manual=999;
-
-struct dht_s dht_11;
-
-#define SENSOR_TEMPERATURA		"testtopic/gms/sensor_temperatura"
-#define SENSOR_LUMINOSIDADE		"testtopic/gms/sensor_luminosidade"
-#define SENSOR_UMIDADE			"testtopic/gms/sensor_umidade"
-#define CONTROLE_DIMERIZACAO	"testtopic/gms/controle_dimerizacao"
-#define RELAY_1					"testtopic/gms/relay_1"
-#define RELAY_2					"testtopic/gms/relay_2"
-#define LIMITES_DIMERIZACAO		"testtopic/gms/limites_dimerizacao"
-#define LIMITES_RELAY_1			"testtopic/gms/limites_relay_1"
-#define LIMITES_RELAY_2			"testtopic/gms/limites_relay_2"
 
 void configure_output_pins()
 {
@@ -161,12 +149,12 @@ int32_t app_udp_handler(uint8_t *packet)
 			sprintf(data, "LIMITES_DIMERIZACAO: [%s]", dataval);
 
 			/* Split the dataval string */
-			char *char_ptr = strtok(dataval, ";");
-			if (char_ptr != NULL) {
-				val_min = atoi(char_ptr);
-				char_ptr = strtok(NULL, ";");
-				if (char_ptr != NULL) {
-					val_max = atoi(char_ptr);
+			char *aux = strtok(dataval, ";");
+			if (aux != NULL) {
+				val_min = atoi(aux);
+				aux = strtok(NULL, ";");
+				if (aux != NULL) {
+					val_max = atoi(aux);
 				}
 			}
 
@@ -183,12 +171,12 @@ int32_t app_udp_handler(uint8_t *packet)
 			sprintf(data, "LIMITES_RELAY_1: [%s]", dataval);
 
 			/* Split the dataval string */
-			char *char_ptr = strtok(dataval, ";");
-			if (char_ptr != NULL) {
-				val_min = atoi(char_ptr);
-				char_ptr = strtok(NULL, ";");
-				if (char_ptr != NULL) {
-					val_max = atoi(char_ptr);
+			char *aux = strtok(dataval, ";");
+			if (aux != NULL) {
+				val_min = atoi(aux);
+				aux = strtok(NULL, ";");
+				if (aux != NULL) {
+					val_max = atoi(aux);
 				}
 			}
 
@@ -205,12 +193,12 @@ int32_t app_udp_handler(uint8_t *packet)
 			sprintf(data, "LIMITES_RELAY_2: [%s]", dataval);
 
 			/* Split the dataval string */
-			char *char_ptr = strtok(dataval, ";");
-			if (char_ptr != NULL) {
-				val_min = atoi(char_ptr);
-				char_ptr = strtok(NULL, ";");
-				if (char_ptr != NULL) {
-					val_max = atoi(char_ptr);
+			char *aux = strtok(dataval, ";");
+			if (aux != NULL) {
+				val_min = atoi(aux);
+				aux = strtok(NULL, ";");
+				if (aux != NULL) {
+					val_max = atoi(aux);
 				}
 			}
 
@@ -321,20 +309,6 @@ void net_setup(uint8_t *packet)
 	netif_recv(packet);
 }
 
-
-float temperature()
-{
-	float temp = 0.0;
-	float voltage;
-	
-	for (int i = 0; i < ADC_SAMPLES; i++) {
-		voltage = adc_read() * (V_RAIL / ADC_MAX);
-		temp += ((voltage - F_VOLTAGE) / T_COEFF);
-	}
-	
-	return (temp / ADC_SAMPLES);
-}
-
 float luminosity()
 {
 	float voltage, lux = 0.0, rldr;
@@ -366,11 +340,6 @@ float task_temp_dht(void)
 	if (val == ERR_ERROR)
 		printf("Sensor DHT_11 error: %d\n", val);
 	else {
-		/* printf("DHT_11: %d %d %d %d\n", dht_11.data[0],
-		dht_11.data[1], dht_11.data[2], dht_11.data[3]); */
-		/* printf("DHT_11: temp %d.%dC, humidity: %d.%d\n",
-		dht_11.temperature / 10, dht_11.temperature % 10,
-		dht_11.humidity / 10, dht_11.humidity % 10); */
 		temp = (float)(dht_11.temperature / 10) + (float)(dht_11.temperature % 10) / 10.0f;
 	}
 		
@@ -395,11 +364,6 @@ float task_humid_dht(void)
 	if (val == ERR_ERROR)
 		printf("Sensor DHT_11 error: %d\n", val);
 	else {
-		/* printf("DHT_11: %d %d %d %d\n", dht_11.data[0],
-		dht_11.data[1], dht_11.data[2], dht_11.data[3]); */
-		/* printf("DHT_11: temp %d.%dC, humidity: %d.%d\n",
-		dht_11.temperature / 10, dht_11.temperature % 10,
-		dht_11.humidity / 10, dht_11.humidity % 10); */
 		humid = (float)(dht_11.humidity / 10) + (float)(dht_11.humidity % 10) / 10.0f;
 	}
 		
