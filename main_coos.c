@@ -24,9 +24,10 @@ uint8_t myip[4];
 uint8_t mynm[4];
 uint8_t mygw[4];
 
-int LUX_MIN = -1, LUX_MAX = -1;
-int TEMP_MIN_RELAY_1 = -1, TEMP_MAX_RELAY_1 = -1;
-int TEMP_MIN_RELAY_2 = -1, TEMP_MAX_RELAY_2 = -1;
+int lim_sup_lux = -1, lim_inf_lux = -1;
+int lim_sup_r1 = -1, lim_inf_r1 = -1;
+int lim_sup_r2 = -1, lim_inf_r2 = -1;
+int MANUAL_R1, MANUAL_R2;
 
 const float F_VOLTAGE = 635.0;		// 590 ~ 700mV typical diode forward voltage
 const float T_COEFF = -2.0;			// 1.8 ~ 2.2mV change per degree Celsius
@@ -98,10 +99,11 @@ int32_t app_udp_handler(uint8_t *packet)
 			sprintf(data, "RELAY_1: [%s]", dataval);
 
 			val = atoi(dataval);
+			MANUAL_R1 = val;
 
 			/* toggle RELAY_1 */
-			if (TEMP_MIN_RELAY_1 == -1 && TEMP_MAX_RELAY_1 == -1){
-				if (val){
+			if (lim_sup_r1 == -1 && lim_inf_r1 == -1){
+				if (val == 1){
 					GPIO_SetBits(GPIOA, GPIO_Pin_0); // PA0
 				}
 				else {
@@ -118,10 +120,11 @@ int32_t app_udp_handler(uint8_t *packet)
 			sprintf(data, "RELAY_2: [%s]", dataval);
 
 			val = atoi(dataval);
+			MANUAL_R2 = val;
 
 			/* toggle RELAY_2 */
-			if (TEMP_MIN_RELAY_2 == -1 && TEMP_MAX_RELAY_2 == -1){
-				if (val){
+			if (lim_sup_r2 == -1 && lim_inf_r2 == -1){
+				if (val == 1){
 					GPIO_SetBits(GPIOA, GPIO_Pin_1); // PA1
 				}
 				else {
@@ -140,8 +143,8 @@ int32_t app_udp_handler(uint8_t *packet)
 			val = atoi(dataval);
 
 			/* toggle DIME */
-			if (LUX_MIN == -1 && LUX_MAX == -1){
-				if (val){
+			if (lim_sup_lux == -1 && lim_inf_lux == -1){
+				if (val != 0){
 					TIM4->CCR4 = val; 		// PB9						
 				}
 				else{
@@ -167,9 +170,9 @@ int32_t app_udp_handler(uint8_t *packet)
 				}
 			}
 
-			/* Update LUX_MIN and LUX_MAX */
-			LUX_MIN = val_min;
-			LUX_MAX = val_max;
+			/* Update lim_sup_lux and lim_inf_lux */
+			lim_sup_lux = val_min;
+			lim_inf_lux = val_max;
 		}
 		if (strstr(datain, LIMITES_RELAY_1)){
 			/* Skip topic name */
@@ -189,9 +192,9 @@ int32_t app_udp_handler(uint8_t *packet)
 				}
 			}
 
-			/* Update TEMP_MIN_RELAY_1 and TEMP_MAX_RELAY_1 */
-			TEMP_MIN_RELAY_1 = val_min;
-			TEMP_MAX_RELAY_1 = val_max;
+			/* Update lim_sup_r1 and lim_inf_r2 */
+			lim_sup_r1 = val_min;
+			lim_inf_r1 = val_max;
 		}
 		if (strstr(datain, LIMITES_RELAY_2)){
 			/* Skip topic name */
@@ -211,9 +214,9 @@ int32_t app_udp_handler(uint8_t *packet)
 				}
 			}
 
-			/* Update TEMP_MIN_RELAY_2 and TEMP_MAX_RELAY_2 */
-			TEMP_MIN_RELAY_2 = val_min;
-			TEMP_MAX_RELAY_2 = val_max;
+			/* Update lim_sup_r2 and lim_inf_r2 */
+			lim_sup_r2 = val_min;
+			lim_inf_r2 = val_max;
 		}
 	}
 	
@@ -406,8 +409,8 @@ float task_humid_dht(void)
 
 float task_relay_1()
 {
-    if (TEMP_MIN_RELAY_1 != -1 && TEMP_MAX_RELAY_1 != -1) {
-        if (temp >= TEMP_MIN_RELAY_1 && temp <= TEMP_MAX_RELAY_1) {
+    if (lim_sup_r1 != -1 && lim_inf_r1 != -1) {
+        if (temp >= lim_sup_r1 && temp <= lim_inf_r1) {
             GPIO_SetBits(GPIOA, GPIO_Pin_0); // PA0
             return 1.0; // Ativado
         } else {
@@ -420,8 +423,8 @@ float task_relay_1()
 
 float task_relay_2()
 {
-    if (TEMP_MIN_RELAY_2 != -1 && TEMP_MAX_RELAY_2 != -1) {
-        if (temp >= TEMP_MIN_RELAY_2 && temp <= TEMP_MAX_RELAY_2) {
+    if (lim_sup_r2 != -1 && lim_inf_r2 != -1) {
+        if (temp >= lim_sup_r2 && temp <= lim_inf_r2) {
             GPIO_SetBits(GPIOA, GPIO_Pin_1); // PA1
             return 1.0; // Ativado
         } else {
@@ -432,18 +435,43 @@ float task_relay_2()
     return 0.0; // Padrão
 }
 
+float task_manual_relay_1(){
+	if (lim_sup_r1 == -1 && lim_inf_r1 == -1) {
+        if (MANUAL_R1 == 1) {
+            GPIO_SetBits(GPIOA, GPIO_Pin_0); // PA0
+            return 1.0; // Ativado
+        } else {
+            GPIO_ResetBits(GPIOA, GPIO_Pin_0);  // PA0
+            return 0.0; // Desativado
+        }
+    }
+	return 0.0;
+}
+
+float task_manual_relay_2(){
+	if (lim_sup_r2 == -1 && lim_inf_r2 == -1) {
+        if (MANUAL_R2 == 1) {
+            GPIO_SetBits(GPIOA, GPIO_Pin_1); // PA1
+            return 1.0; // Ativado
+        } else {
+            GPIO_ResetBits(GPIOA, GPIO_Pin_1);  // PA1
+            return 0.0; // Desativado
+        }
+    }
+	return 0.0;
+}
 
 void *task_dime()
 {
-	if (LUX_MIN != -1 && LUX_MAX != -1){
-		if (lux < LUX_MIN){
+	if (lim_sup_lux != -1 && lim_inf_lux != -1){
+		if (lux < lim_sup_lux){
 			TIM4->CCR4 = 999; 		// PB9						
 		}
-		else if (lux > LUX_MAX){
+		else if (lux > lim_inf_lux){
 			TIM4->CCR4 = 0;			// PB9
 		}
 		else{
-			TIM4->CCR4 = (int)(999 * (1 - (lux / LUX_MAX)));
+			TIM4->CCR4 = (int)(999 * (1 - (lux / lim_inf_lux)));
 		}
 	}	
 
@@ -531,7 +559,7 @@ int main(void)
 		
 		if (sensor_poll_data()) {
 			sensor1_data(packet, SENSOR_TEMPERATURA, task_temp_dht());
-			sensor2_data(packet, SENSOR_LUMINOSIDADE, task_lux());
+			//sensor2_data(packet, SENSOR_LUMINOSIDADE, task_lux());
 			sensor3_data(packet, SENSOR_UMIDADE, task_humid_dht());
 			sensor4_data(packet, LIMITES_RELAY_1, task_relay_1());
 			sensor5_data(packet, LIMITES_RELAY_2, task_relay_2());
